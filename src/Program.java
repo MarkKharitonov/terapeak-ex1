@@ -62,6 +62,7 @@ public class Program {
     int batchSize = options.valueOf(batchSizeOption);
 
     final BlockingQueue<List<Item>> bus = new LinkedBlockingDeque<List<Item>>();
+    final AtomicInteger accepted = new AtomicInteger();
     final AtomicInteger parsed = new AtomicInteger();
     final AtomicInteger inserted = new AtomicInteger();
 
@@ -75,12 +76,12 @@ public class Program {
       public void run() {
         try {
           while (dbThreadCount.get() > 0) {
-            System.out.print(String.format("Parsed = %d, inserted = %d\r", parsed.get(), inserted.get()));
+            System.out.print(String.format("Parsed = %d, accepted = %d, inserted = %d\r", parsed.get(), accepted.get(), inserted.get()));
             Thread.sleep(1000);
           }
         } catch (InterruptedException e) {
         }
-        System.out.println(String.format("Parsed = %d, inserted = %d", parsed.get(), inserted.get()));
+        System.out.println(String.format("Parsed = %d, accepted = %d, inserted = %d", parsed.get(), accepted.get(), inserted.get()));
       }
     });
 
@@ -137,11 +138,12 @@ public class Program {
           }
         }
       }
+      parsed.incrementAndGet();
       if (name != null) {
         batch.add(new Item(name, description));
         if (batch.size() == batchSize) {
           bus.put(batch);
-          parsed.addAndGet(batch.size());
+          accepted.addAndGet(batch.size());
           batch = new ArrayList<Item>(batchSize);
         }
       }
@@ -149,7 +151,7 @@ public class Program {
     } while (jParser.nextToken() == JsonToken.START_OBJECT && dbThreadCount.get() > 0);
     if (!batch.isEmpty() && dbThreadCount.get() > 0) {
       bus.put(batch);
-      parsed.addAndGet(batch.size());
+      accepted.addAndGet(batch.size());
     }
     jParser.close();
     gzipIn.close();
