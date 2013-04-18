@@ -2,6 +2,7 @@ DROP TABLE items;
 
 CREATE UNLOGGED TABLE items
 (
+  id serial,
   name character varying(1000),
   description character varying(10000)
 )

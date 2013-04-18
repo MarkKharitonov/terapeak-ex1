@@ -1,4 +1,4 @@
-<project name="ex" basedir="." default="deploy-release">
+<project name="ex1" basedir="." default="deploy-release">
 
   <property name="src.dir" value="src"/>
   <property name="build.dir" value="bin"/>

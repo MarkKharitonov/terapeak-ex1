@@ -48,15 +48,15 @@ public class Program {
       .withRequiredArg().ofType(Integer.class).defaultsTo(1);
     OptionSpec<String> fileOption = parser.acceptsAll(Arrays.asList("f", "file"),
       "A file to be read. Must be a gzipped file of json records separated with one or more whitespaces.")
-      .withRequiredArg().ofType(String.class).required();
+      .withRequiredArg().required().ofType(String.class);
 
     OptionSet options = parser.parse(args);
-    if (options.has("?") || args.length == 0) {
+    String filePath = options.valueOf(fileOption);
+    if (options.has("?") || args.length == 0 || filePath == null) {
       parser.printHelpOn(System.out);
       return;
     }
 
-    String filePath = options.valueOf(fileOption);
     int dbThreadCount = options.valueOf(dbThreadCountOption);
     int batchSize = options.valueOf(batchSizeOption);
 
