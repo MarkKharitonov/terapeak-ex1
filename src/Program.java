@@ -11,6 +11,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
 
 import javax.sql.DataSource;
@@ -57,15 +58,34 @@ public class Program {
       return;
     }
 
-    int dbThreadCount = options.valueOf(dbThreadCountOption);
+    final AtomicInteger dbThreadCount = new AtomicInteger(options.valueOf(dbThreadCountOption));
     int batchSize = options.valueOf(batchSizeOption);
 
     final BlockingQueue<List<Item>> bus = new LinkedBlockingDeque<List<Item>>();
+    final AtomicInteger parsed = new AtomicInteger();
+    final AtomicInteger inserted = new AtomicInteger();
 
     final DataSource ds = getPoolingDataSource("org.postgresql.Driver", "jdbc:postgresql:exdb", "postgres", "123");
 
-    ThreadPoolExecutor exec = (ThreadPoolExecutor)Executors.newFixedThreadPool(dbThreadCount);
-    for (int i = 0; i < dbThreadCount; ++i) {
+    ThreadPoolExecutor exec = (ThreadPoolExecutor)Executors.newFixedThreadPool(dbThreadCount.get() + 1);
+
+    // Progress
+    exec.execute(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          while (dbThreadCount.get() > 0) {
+            System.out.print(String.format("Parsed = %d, inserted = %d\r", parsed.get(), inserted.get()));
+            Thread.sleep(1000);
+          }
+        } catch (InterruptedException e) {
+        }
+        System.out.println(String.format("Parsed = %d, inserted = %d", parsed.get(), inserted.get()));
+      }
+    });
+
+    // Insertion
+    for (int i = dbThreadCount.get(); i >= 0; --i) {
       exec.execute(new Runnable() {
         @Override
         public void run() {
@@ -82,14 +102,17 @@ public class Program {
               }
               stmt.executeBatch();
               c.commit();
+              inserted.addAndGet(items.size());
             }
           } catch (Exception e) {
             e.printStackTrace();
           }
+          dbThreadCount.decrementAndGet();
         }
       });
     }
 
+    // Parsing
     GZIPInputStream gzipIn = new GZIPInputStream(new BufferedInputStream(new FileInputStream(filePath)));
     JsonFactory jf = new JsonFactory();
     JsonParser jParser = jf.createJsonParser(gzipIn);
@@ -118,17 +141,20 @@ public class Program {
         batch.add(new Item(name, description));
         if (batch.size() == batchSize) {
           bus.put(batch);
+          parsed.addAndGet(batch.size());
           batch = new ArrayList<Item>(batchSize);
         }
       }
-    } while (jParser.nextToken() == JsonToken.START_OBJECT);
-    if (!batch.isEmpty()) {
+      // No need to loop if there are no consumers
+    } while (jParser.nextToken() == JsonToken.START_OBJECT && dbThreadCount.get() > 0);
+    if (!batch.isEmpty() && dbThreadCount.get() > 0) {
       bus.put(batch);
+      parsed.addAndGet(batch.size());
     }
     jParser.close();
     gzipIn.close();
 
-    for (int i = 0; i < dbThreadCount; ++i) {
+    for (int i = dbThreadCount.get(); i >= 0; --i) {
       bus.put(new ArrayList<Item>());
     }
 
