@@ -3,9 +3,12 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingDeque;
@@ -40,21 +43,31 @@ public class Program {
     return new PoolingDataSource(connectionPool);
   }
 
-  public static void main(String[] args) throws IOException, InterruptedException, ClassNotFoundException {
+  public static void main(String[] args) throws IOException, InterruptedException, ClassNotFoundException, SQLException {
     OptionParser parser = new OptionParser();
     parser.acceptsAll(Arrays.asList("help", "h", "?"), "Display the help.").forHelp();
+    OptionSpec<String> queryOption = parser.accepts("query", "Query the database for the given keyword.")
+      .withRequiredArg().ofType(String.class);
     OptionSpec<Integer> batchSizeOption = parser.accepts("batchSize", "The size of the insert batch.")
       .withRequiredArg().ofType(Integer.class).defaultsTo(100);
     OptionSpec<Integer> dbThreadCountOption = parser.accepts("dbThreadCount", "The count of threads doing insert into the DB.")
       .withRequiredArg().ofType(Integer.class).defaultsTo(1);
     OptionSpec<String> fileOption = parser.acceptsAll(Arrays.asList("f", "file"),
       "A file to be read. Must be a gzipped file of json records separated with one or more whitespaces.")
-      .withRequiredArg().required().ofType(String.class);
+      .withRequiredArg().ofType(String.class);
 
     OptionSet options = parser.parse(args);
     String filePath = options.valueOf(fileOption);
-    if (options.has("?") || args.length == 0 || filePath == null) {
+    String query = options.valueOf(queryOption);
+    if (options.has("?") || args.length == 0 || (filePath == null && query == null)) {
       parser.printHelpOn(System.out);
+      return;
+    }
+
+    final DataSource ds = getPoolingDataSource("org.postgresql.Driver", "jdbc:postgresql:exdb", "postgres", "123");
+
+    if (query != null) {
+      doQuery(ds, query);
       return;
     }
 
@@ -65,8 +78,6 @@ public class Program {
     final AtomicInteger accepted = new AtomicInteger();
     final AtomicInteger parsed = new AtomicInteger();
     final AtomicInteger inserted = new AtomicInteger();
-
-    final DataSource ds = getPoolingDataSource("org.postgresql.Driver", "jdbc:postgresql:exdb", "postgres", "123");
 
     ThreadPoolExecutor exec = (ThreadPoolExecutor)Executors.newFixedThreadPool(dbThreadCount.get() + 1);
 
@@ -95,16 +106,26 @@ public class Program {
             Connection c = ds.getConnection();
             c.setAutoCommit(false);
             PreparedStatement stmt = c.prepareStatement("INSERT INTO items (name, description) VALUES(?, ?)");
+            PreparedStatement stmt2 = c.prepareStatement("INSERT INTO keywords (name, keyword, count) VALUES(?, ?, ?)");
             while (!(items = bus.take()).isEmpty()) {
               for (Item item : items) {
                 stmt.setString(1, item.name);
                 stmt.setString(2, item.description);
                 stmt.addBatch();
+                stmt2.setString(1, item.name);
+                for (Map.Entry<String, int[]> kc : item.keywords.entrySet()) {
+                  stmt2.setString(2, kc.getKey());
+                  stmt2.setInt(3, kc.getValue()[0]);
+                  stmt2.addBatch();
+                }
               }
               stmt.executeBatch();
+              stmt2.executeBatch();
               c.commit();
               inserted.addAndGet(items.size());
             }
+          } catch (SQLException e) {
+            printStackTrace(e);
           } catch (Exception e) {
             e.printStackTrace();
           }
@@ -162,5 +183,22 @@ public class Program {
 
     exec.shutdown();
     exec.awaitTermination(1, TimeUnit.HOURS);
+  }
+
+  private static void doQuery(DataSource ds, String query) throws SQLException {
+    Connection c = ds.getConnection();
+    PreparedStatement stmt = c.prepareStatement("SELECT name, count from keywords where keyword = ?");
+    stmt.setString(1, query);
+    ResultSet rs = stmt.executeQuery();
+    while (rs.next()) {
+      System.out.println(String.format("%s : %d\n", rs.getString(1), rs.getInt(2)));
+    }
+  }
+
+  private static void printStackTrace(SQLException e) {
+    if (e.getNextException() != null) {
+      printStackTrace(e.getNextException());
+    }
+    e.printStackTrace();
   }
 }
