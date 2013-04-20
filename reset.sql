@@ -1,6 +1,5 @@
 DROP TABLE items;
 DROP TABLE keywords;
-DROP INDEX idx_keyword;
 
 CREATE UNLOGGED TABLE items
 (

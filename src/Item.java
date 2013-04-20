@@ -21,14 +21,19 @@ public class Item {
   public Item(String name, String description) {
     this.name = name;
     this.description = description;
-    for (String keyword : description.split(delim)) {
-      if (!keyword.isEmpty() && Collections.binarySearch(excludedKeywords, keyword, CaseInsesitiveStringComparator.instance) < 0) {
-        int[] found = keywords.get(keyword);
-        if (found == null) {
-          found = new int[1];
-          keywords.put(keyword.toLowerCase(), found);
+    if (description != null) {
+      for (String keyword : description.split(delim)) {
+        if (!keyword.isEmpty() && Collections.binarySearch(excludedKeywords, keyword, CaseInsesitiveStringComparator.instance) < 0) {
+          int[] found = keywords.get(keyword);
+          if (found == null) {
+            found = new int[1];
+            if (keyword.length() > Program.maxKeywordSize) {
+              keyword = keyword.substring(0, Program.maxKeywordSize - 3) + "...";
+            }
+            keywords.put(keyword.toLowerCase(), found);
+          }
+          ++found[0];
         }
-        ++found[0];
       }
     }
   }

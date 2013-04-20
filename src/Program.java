@@ -1,7 +1,7 @@
 import java.io.BufferedInputStream;
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -34,6 +34,8 @@ import org.apache.commons.pool.impl.GenericKeyedObjectPoolFactory;
 import org.apache.commons.pool.impl.GenericObjectPool;
 
 public class Program {
+  public static int maxKeywordSize;
+
   private static DataSource getPoolingDataSource(String driverClass, String url, String user, String password) throws ClassNotFoundException {
     Class.forName(driverClass);
     ConnectionFactory connectionFactory = new DriverManagerConnectionFactory(url, user, password);
@@ -43,7 +45,7 @@ public class Program {
     return new PoolingDataSource(connectionPool);
   }
 
-  public static void main(String[] args) throws IOException, InterruptedException, ClassNotFoundException, SQLException {
+  public static void main(String[] args) throws Exception, InterruptedException, ClassNotFoundException, SQLException {
     OptionParser parser = new OptionParser();
     parser.acceptsAll(Arrays.asList("help", "h", "?"), "Display the help.").forHelp();
     OptionSpec<String> queryOption = parser.accepts("query", "Query the database for the given keyword.")
@@ -70,6 +72,8 @@ public class Program {
       doQuery(ds, query);
       return;
     }
+
+    maxKeywordSize = getMaxKeywordSize(ds);
 
     final AtomicInteger dbThreadCount = new AtomicInteger(options.valueOf(dbThreadCountOption));
     int batchSize = options.valueOf(batchSizeOption);
@@ -101,12 +105,14 @@ public class Program {
       exec.execute(new Runnable() {
         @Override
         public void run() {
+          Connection c = null;
+          PreparedStatement stmt = null, stmt2 = null;
           try {
             List<Item> items;
-            Connection c = ds.getConnection();
+            c = ds.getConnection();
             c.setAutoCommit(false);
-            PreparedStatement stmt = c.prepareStatement("INSERT INTO items (name, description) VALUES(?, ?)");
-            PreparedStatement stmt2 = c.prepareStatement("INSERT INTO keywords (name, keyword, count) VALUES(?, ?, ?)");
+            stmt = c.prepareStatement("INSERT INTO items (name, description) VALUES(?, ?)");
+            stmt2 = c.prepareStatement("INSERT INTO keywords (name, keyword, count) VALUES(?, ?, ?)");
             while (!(items = bus.take()).isEmpty()) {
               for (Item item : items) {
                 stmt.setString(1, item.name);
@@ -128,6 +134,10 @@ public class Program {
             printStackTrace(e);
           } catch (Exception e) {
             e.printStackTrace();
+          } finally {
+            close(c);
+            close(stmt);
+            close(stmt2);
           }
           dbThreadCount.decrementAndGet();
         }
@@ -185,13 +195,68 @@ public class Program {
     exec.awaitTermination(1, TimeUnit.HOURS);
   }
 
+  private static void close(PreparedStatement stmt) {
+    if (stmt != null) {
+      try {
+        stmt.close();
+      } catch (Exception e) {
+      }
+    }
+  }
+
+  private static void close(Connection c) {
+    if (c != null) {
+      try {
+        c.close();
+      } catch (Exception e) {
+      }
+    }
+  }
+
+  private static int getMaxKeywordSize(DataSource ds) throws Exception {
+    Connection c = null;
+    ResultSet rs = null;
+    try {
+      c = ds.getConnection();
+      DatabaseMetaData meta = c.getMetaData();
+      rs = meta.getColumns(null, null, "keywords", "keyword");
+      while (rs.next()) {
+        if ("keyword".equals(rs.getString("COLUMN_NAME"))) {
+          return rs.getInt("COLUMN_SIZE");
+        }
+      }
+      throw new Exception("The keyword column was not found!");
+    } finally {
+      close(c);
+      close(rs);
+    }
+  }
+
   private static void doQuery(DataSource ds, String query) throws SQLException {
-    Connection c = ds.getConnection();
-    PreparedStatement stmt = c.prepareStatement("SELECT name, count from keywords where keyword = ?");
-    stmt.setString(1, query);
-    ResultSet rs = stmt.executeQuery();
-    while (rs.next()) {
-      System.out.println(String.format("%s : %d\n", rs.getString(1), rs.getInt(2)));
+    Connection c = null;
+    PreparedStatement stmt = null;
+    ResultSet rs = null;
+    try {
+      c = ds.getConnection();
+      stmt = c.prepareStatement("SELECT name, count from keywords where keyword = ?");
+      stmt.setString(1, query);
+      rs = stmt.executeQuery();
+      while (rs.next()) {
+        System.out.println(String.format("%s : %d\n", rs.getString(1), rs.getInt(2)));
+      }
+    } finally {
+      close(c);
+      close(stmt);
+      close(rs);
+    }
+  }
+
+  private static void close(ResultSet rs) {
+    if (rs != null) {
+      try {
+        rs.close();
+      } catch (Exception e) {
+      }
     }
   }
 
