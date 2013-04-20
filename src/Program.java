@@ -242,7 +242,7 @@ public class Program {
       stmt.setString(1, query);
       rs = stmt.executeQuery();
       while (rs.next()) {
-        System.out.println(String.format("%s : %d\n", rs.getString(1), rs.getInt(2)));
+        System.out.println(String.format("%s : %d", rs.getString(1), rs.getInt(2)));
       }
     } finally {
       close(c);
